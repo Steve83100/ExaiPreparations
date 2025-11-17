@@ -13,8 +13,8 @@ import resnet
 
 
 # Model's name is used for model save's name and deciding which model is actually used.
-MODEL_NAME = "vgg13"
-# MODEL_NAME = "resnet"
+# MODEL_NAME = "vgg13"
+MODEL_NAME = "resnet"
 
 # Dataset's name is used in model save's name and deciding which dataset is used.
 DATASET_NAME = "cifar-10"
