@@ -44,7 +44,7 @@ class Net(nn.Module):
         super().__init__()
         print("Created model: resnet")
         self.begin = nn.Sequential(
-            nn.LazyConv2d(64, kernel_size=7, stride=2, padding=3),
+            nn.LazyConv2d(64, kernel_size=3, stride=2, padding=3),
             nn.LazyBatchNorm2d(), nn.ReLU(),
             nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         )
