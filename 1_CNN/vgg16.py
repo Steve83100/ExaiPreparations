@@ -1,5 +1,5 @@
 '''
-VGG-13 neural network. Instantiate model with vgg.Net()
+VGG-16 neural network. Instantiate model with vgg.Net()
 '''
 
 import torch.nn as nn
@@ -19,8 +19,9 @@ class Net(nn.Module):
             vgg_block(2, 64),
             vgg_block(2, 128),
             vgg_block(2, 256),
-            vgg_block(2, 512),
-            vgg_block(2, 512),
+            nn.LazyBatchNorm2d(), # This shouldn't have been here, but it helps with gradient vanishing
+            vgg_block(3, 512),
+            vgg_block(3, 512),
             # CIFAR-10 has images of size 32x32. After 5 layers of MaxPool2d, they shrink to 1x1. Will this cause problem?
             nn.Flatten(),
             nn.LazyLinear(4096), nn.ReLU(),

@@ -5,7 +5,6 @@ Resnet-18 neural network. Instantiate model with resnet.Net()
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class ResidualBlock(nn.Module):
     def __init__(self, num_channels, use_1x1conv = False, stride = 1):
         super().__init__()
@@ -26,7 +25,7 @@ class ResidualBlock(nn.Module):
         Y += X
         return F.relu(Y)
     
-class ResidualModule(nn.Module): # Two residual blocks compose one module
+class ResidualModule(nn.Module): # Many (usually 2) residual blocks compose one module
     def __init__(self, num_blocks, num_channels, is_first_module = False):
         super().__init__()
         if(is_first_module):
@@ -42,9 +41,8 @@ class ResidualModule(nn.Module): # Two residual blocks compose one module
 class Net(nn.Module):
     def __init__(self, num_classes):
         super().__init__()
-        print("Created model: resnet")
         self.begin = nn.Sequential(
-            nn.LazyConv2d(64, kernel_size=3, stride=2, padding=3),
+            nn.LazyConv2d(64, kernel_size=3, stride=1, padding=1), # Kernel shrinked to adapt to the smaller cifar-10
             nn.LazyBatchNorm2d(), nn.ReLU(),
             nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         )

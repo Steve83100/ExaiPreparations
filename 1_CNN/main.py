@@ -13,27 +13,29 @@ import resnet
 
 
 # Model's name is used for model save's name and deciding which model is actually used.
-# MODEL_NAME = "vgg13"
+# MODEL_NAME = "vgg16"
 MODEL_NAME = "resnet"
 
 # Dataset's name is used in model save's name and deciding which dataset is used.
-DATASET_NAME = "cifar-10"
-CLASSES_NUM = 10
+# DATASET_NAME = "cifar-10"
+# CLASSES_NUM = 10
 
-# DATASET_NAME = "tiny-imagenet-200"
-# CLASSES_NUM = 200 # Number of classes the dataset has
+DATASET_NAME = "tiny-imagenet-200"
+CLASSES_NUM = 200 # Number of classes the dataset has
 
 # Hyperparameters
 EPOCHS = 50
-BATCH_SIZE = 64
-BATCH_GROUP_NUM = 100 # Number of batches in a group. Will record progress after each trained group
-START_LR = 0.01
+BATCH_SIZE = 128
+BATCH_GROUP_NUM = 100 # Number of batches in a group. Will report progress after each trained group
+START_LR = 0.02
+END_LR = 0.0001
 
 DATASET_PATH = "~/syang/Datasets/"
-MODEL_PATH = "./ModelSaves/"
-OUTPUT_PATH = "./Outputs/"
+ROOT_PATH = "~/syang/ExaiPreparations/" # Path of ExaiPreparations
+MODEL_PATH = ROOT_PATH + "ModelSaves/"
+OUTPUT_PATH = ROOT_PATH + "Outputs/"
 
-DEVICE = torch.device("cuda:5" if torch.cuda.is_available() else "cpu") # Use CUDA if available
+DEVICE = torch.device("cuda:4" if torch.cuda.is_available() else "cpu") # Use CUDA if available
 print("Using device: " + torch.cuda.get_device_name(DEVICE))
 
 
@@ -41,32 +43,41 @@ print("Using device: " + torch.cuda.get_device_name(DEVICE))
 if __name__ == '__main__':
     
     # Retrive and transform data
+    print("Fetching dataset: " + DATASET_NAME)
     match DATASET_NAME:
         case "cifar-10":
             train_transform = trans.Compose([
                 trans.RandomCrop(32, padding=4),
                 trans.RandomHorizontalFlip(),
                 trans.ToTensor(),
-                trans.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+                trans.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
                 ])
             train_set = torchvision.datasets.CIFAR10(root=DATASET_PATH, train=True, download=True, transform=train_transform)
             train_loader = data.DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
             
             test_transform = trans.Compose([
                 trans.ToTensor(),
-                trans.RandomCrop(32, padding=4),
-                trans.RandomHorizontalFlip(),
-                trans.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+                trans.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
                 ])
             test_set = torchvision.datasets.CIFAR10(root=DATASET_PATH, train=False, download=True, transform=test_transform)
             test_loader = data.DataLoader(test_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
             # classes = ("plane","car","bird","cat","deer","dog","frog","horse","ship","truck")
             
         case "tiny-imagenet-200":
-            transform = trans.Compose([trans.ToTensor(), trans.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-            train_set = torchvision.datasets.ImageFolder(root=DATASET_PATH+"tiny-imagenet-200/train", transform=transform)
-            test_set = torchvision.datasets.ImageFolder(root=DATASET_PATH+"tiny-imagenet-200/val", transform=transform)
+            train_transform = trans.Compose([
+                trans.RandomCrop(64, padding=4),
+                trans.RandomHorizontalFlip(),
+                trans.ToTensor(),
+                trans.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+                ])
+            train_set = torchvision.datasets.ImageFolder(root=DATASET_PATH+"tiny-imagenet-200/train", transform=train_transform)
             train_loader = torch.utils.data.DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
+            
+            test_transform = trans.Compose([
+                trans.ToTensor(),
+                trans.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+                ])
+            test_set = torchvision.datasets.ImageFolder(root=DATASET_PATH+"tiny-imagenet-200/val", transform=test_transform)
             test_loader = torch.utils.data.DataLoader(test_set, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True)
         case _:
             raise Exception("Unrecognized dataset: " + DATASET_NAME)
@@ -107,7 +118,7 @@ if __name__ == '__main__':
         # After the above processing, the actual log-loss is calculated: l_n = - sum(y_n_c * log(yPred_n_c))
 
     optimizer = optim.SGD(model.parameters(), lr=START_LR, momentum=0.9, weight_decay=5e-4)
-    scheduler = CosineAnnealingLR(optimizer, T_max=EPOCHS/10)
+    scheduler = CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=END_LR)
 
 
     # Train model and record training process
