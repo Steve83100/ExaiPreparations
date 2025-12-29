@@ -12,16 +12,18 @@ import vgg16
 import resnet
 
 
+
 # Model's name is used for model save's name and deciding which model is actually used.
 # MODEL_NAME = "vgg16"
 MODEL_NAME = "resnet"
 
 # Dataset's name is used in model save's name and deciding which dataset is used.
-# DATASET_NAME = "cifar-10"
-# CLASSES_NUM = 10
+DATASET_NAME = "cifar-10"
+CLASSES_NUM = 10
 
-DATASET_NAME = "tiny-imagenet-200"
-CLASSES_NUM = 200 # Number of classes the dataset has
+# Our handmade tiny-imagenet-200 doesn't seem to be well formed. Just don't use it for now.
+# DATASET_NAME = "tiny-imagenet-200"
+# CLASSES_NUM = 200 # Number of classes the dataset has
 
 # Hyperparameters
 EPOCHS = 50
@@ -35,12 +37,18 @@ ROOT_PATH = "~/syang/ExaiPreparations/" # Path of ExaiPreparations
 MODEL_PATH = ROOT_PATH + "ModelSaves/"
 OUTPUT_PATH = ROOT_PATH + "Outputs/"
 
-DEVICE = torch.device("cuda:4" if torch.cuda.is_available() else "cpu") # Use CUDA if available
-print("Using device: " + torch.cuda.get_device_name(DEVICE))
+if torch.cuda.is_available(): # Use CUDA if available
+    DEVICE = torch.device("cuda:4")
+    print("Using device: " + torch.cuda.get_device_name(DEVICE))
+else:
+    DEVICE = torch.device("cpu")
+    print("Using device: CPU")
 
 
 
 if __name__ == '__main__':
+    
+    
     
     # Retrive and transform data
     print("Fetching dataset: " + DATASET_NAME)
@@ -63,29 +71,27 @@ if __name__ == '__main__':
             test_loader = data.DataLoader(test_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
             # classes = ("plane","car","bird","cat","deer","dog","frog","horse","ship","truck")
             
-        case "tiny-imagenet-200":
-            train_transform = trans.Compose([
-                trans.RandomCrop(64, padding=4),
-                trans.RandomHorizontalFlip(),
-                trans.ToTensor(),
-                trans.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-                ])
-            train_set = torchvision.datasets.ImageFolder(root=DATASET_PATH+"tiny-imagenet-200/train", transform=train_transform)
-            train_loader = torch.utils.data.DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
+        # case "tiny-imagenet-200":
+        #     train_transform = trans.Compose([
+        #         trans.RandomCrop(64, padding=4),
+        #         trans.RandomHorizontalFlip(),
+        #         trans.ToTensor(),
+        #         trans.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        #         ])
+        #     train_set = torchvision.datasets.ImageFolder(root=DATASET_PATH+"tiny-imagenet-200/train", transform=train_transform)
+        #     train_loader = torch.utils.data.DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
             
-            test_transform = trans.Compose([
-                trans.ToTensor(),
-                trans.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-                ])
-            test_set = torchvision.datasets.ImageFolder(root=DATASET_PATH+"tiny-imagenet-200/val", transform=test_transform)
-            test_loader = torch.utils.data.DataLoader(test_set, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True)
+        #     test_transform = trans.Compose([
+        #         trans.ToTensor(),
+        #         trans.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        #         ])
+        #     test_set = torchvision.datasets.ImageFolder(root=DATASET_PATH+"tiny-imagenet-200/val", transform=test_transform)
+        #     test_loader = torch.utils.data.DataLoader(test_set, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True)
+            
         case _:
             raise Exception("Unrecognized dataset: " + DATASET_NAME)
     
-    # for i, (items, labels) in enumerate(train_loader, 0):
-    #     if i==0 :
-    #         print(items.size())
-    #         print(items[0])
+    
     
     # Instantiate model
     print("Creating model: " + MODEL_NAME)
@@ -103,22 +109,22 @@ if __name__ == '__main__':
     model.to(DEVICE)
     # print(model)
 
-
     # Create criterion and optimizer
     criterion = nn.CrossEntropyLoss()
-        # The loss calculator does 2 things for us:
+    # The loss calculator does 2 things for us:
 
-        # First, apply a final softmax layer to model's output, so that yPred becomes a probability vector of classes,
-        # such as yPred_n = [1, 2, 3] becomes yPred_n = [0.09, ]
+    # First, apply a final softmax layer to model's output, so that yPred becomes a probability vector of classes,
+    # such as yPred_n = [1, 2, 3] becomes yPred_n = [0.09, ]
 
-        # Next, automatically detect if labels are given in the form of class indexes or probability vectors.
-        # If labels are class indexes (y_n = 0, 1, ..., C-1), then use one-hot encoding to transform into probability vectors,
-        # such as y_n = 1 becomes y_n = [0, 1, 0, ..., 0].
+    # Next, automatically detect if labels are given in the form of class indexes or probability vectors.
+    # If labels are class indexes (y_n = 0, 1, ..., C-1), then use one-hot encoding to transform into probability vectors,
+    # such as y_n = 1 becomes y_n = [0, 1, 0, ..., 0].
 
-        # After the above processing, the actual log-loss is calculated: l_n = - sum(y_n_c * log(yPred_n_c))
+    # After the above processing, the actual log-loss is calculated: l_n = - sum(y_n_c * log(yPred_n_c))
 
     optimizer = optim.SGD(model.parameters(), lr=START_LR, momentum=0.9, weight_decay=5e-4)
     scheduler = CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=END_LR)
+
 
 
     # Train model and record training process
@@ -181,20 +187,14 @@ if __name__ == '__main__':
         # scheduler.step() # Update learning rate after an epoch
 
     print("----------------Training completed----------------")
-    print("Saving model to disk...")
+
 
 
     # Save model to disk
+    print("Saving model to disk...")
     path = MODEL_PATH + MODEL_NAME + '-' + DATASET_NAME + '.pth'
     torch.save(model.state_dict(), path)
 
-
-    # Load model from disk (just for demonstration)
-    # print("Loading model from disk...")
-    # model = resnet.Net(CLASSES_NUM)
-    # model.load_state_dict(torch.load(path, weights_only=True))
-    
-    
     # Plot training and validating process
     print("Plotting loss and accuracy graph...")
     fig = pt.figure()
