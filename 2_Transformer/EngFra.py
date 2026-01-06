@@ -52,7 +52,7 @@ def normalizeString(s):
     return s.strip()
 
 def readLangs(lang1, lang2, reverse=False):
-    lines = open('Datasets/%s-%s.txt' % (lang1, lang2), encoding='utf-8').read().strip().split('\n')
+    lines = open('/home/hqdeng7/syang/Datasets/%s-%s.txt' % (lang1, lang2), encoding='utf-8').read().strip().split('\n')
     pairs = [[normalizeString(s) for s in l.split('\t')] for l in lines]
 
     # make empty language dictionaries
@@ -85,7 +85,7 @@ def filterPairs(pairs, max_length, prefixes):
 MAX_LENGTH = 10
 
 # By default keeps sentences starting with "i am" "i'm" "he is"...
-eng_prefixes = (
+PREFIXES = (
     "i am ", "i m ",
     "he is", "he s ",
     "she is", "she s ",
@@ -99,7 +99,7 @@ eng_prefixes = (
 # ================================================================================
 # Complete preparation
 
-def prepareData(lang1, lang2, max_length = MAX_LENGTH, prefixes = eng_prefixes, reverse=False):
+def prepareData(lang1, lang2, max_length = MAX_LENGTH, prefixes = PREFIXES, reverse=False):
     '''
     Prepares language translation data
     
