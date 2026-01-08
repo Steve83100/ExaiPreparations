@@ -1,5 +1,6 @@
 from __future__ import unicode_literals, print_function, division
 from EngFra import *
+from Transformer import *
 import random
 
 import torch
@@ -72,3 +73,9 @@ def get_dataloaders():
     valid_loader = DataLoader(valid_dataset, shuffle = False, batch_size = BATCH_SIZE)
     
     return input_lang, output_lang, train_loader, valid_loader
+
+
+
+# ================================================================================
+# Instantiate and train model
+
