@@ -2,6 +2,9 @@ from io import open
 import unicodedata
 import re
 import random
+import numpy as np
+import torch
+from torch.utils.data import Dataset
 
 
 
@@ -16,7 +19,7 @@ class Lang:
         self.name = name
         self.word2index = {}
         self.word2count = {}
-        self.index2word = {0: "SOS", 1: "EOS"}
+        self.index2word = {0: "<SOS>", 1: "<EOS>"}
         self.n_words = 2  # Count SOS and EOS
 
     def addSentence(self, sentence):
@@ -97,9 +100,9 @@ PREFIXES = (
 
 
 # ================================================================================
-# Complete preparation
+# Complete Lang building
 
-def prepareData(lang1, lang2, max_length = MAX_LENGTH, prefixes = PREFIXES, reverse=False):
+def buildLang(lang1, lang2, max_length, prefixes = PREFIXES, reverse=False):
     '''
     Prepares language translation data
     
@@ -130,10 +133,83 @@ def prepareData(lang1, lang2, max_length = MAX_LENGTH, prefixes = PREFIXES, reve
 
 
 # ================================================================================
+# Helper functions for creating dataset
+
+def indexesFromSentence(lang, sentence):
+    '''Takes in a sentence, returns a list of word indexes.'''
+    return [lang.word2index[word] for word in sentence.split(' ')]
+
+# def tensorFromSentence(lang, sentence, device):
+#     '''Takes in a sentence, returns a tensor of word indexes, with EOS appended to the end.'''
+#     indexes = indexesFromSentence(lang, sentence)
+#     indexes.append(EOS_token)
+#     return torch.tensor(indexes, dtype=torch.long, device=device).view(1, -1)
+
+# def tensorsFromPair(pair, device):
+#     input_tensor = tensorFromSentence(input_lang, pair[0], device)
+#     target_tensor = tensorFromSentence(output_lang, pair[1], device)
+#     return (input_tensor, target_tensor)
+
+
+
+# ================================================================================
+# Create dataset for translation
+class EnFrDataset(Dataset):
+    """English to French dataset, contains: (en, en_len, SOS+fr, fr+EOS)."""
+    def __init__(self, max_length = MAX_LENGTH):
+        super().__init__()
+        
+        # Load dictionary and pairs
+        self.input_lang, self.output_lang, self.pairs = buildLang('eng', 'fra', max_length)
+        self.size = len(self.pairs)
+        
+        # Create empty sequence vectors
+        self.input_ids = (np.zeros((self.size, MAX_LENGTH), dtype=np.int32))
+        self.input_lens = (np.zeros((self.size), dtype=np.int32))
+        self.target_ids_SOS = (np.zeros((self.size, MAX_LENGTH), dtype=np.int32))
+        self.target_ids_EOS = (np.zeros((self.size, MAX_LENGTH), dtype=np.int32))
+
+        # Fill each sequence vector with a sentence of word indexes
+        # For input sequence, also record length
+        # For target sequence, separately append SOS and EOS
+        for idx, (inp, tgt) in enumerate(self.pairs):
+            inp_ids = indexesFromSentence(self.input_lang, inp)
+            tgt_ids = indexesFromSentence(self.output_lang, tgt)
+            self.input_ids[idx, :len(inp_ids)] = inp_ids
+            self.input_lens[idx] = len(inp_ids)
+            self.target_ids_SOS[idx, :(len(tgt_ids)+1)] = [SOS_token] + tgt_ids
+            self.target_ids_EOS[idx, :(len(tgt_ids)+1)] = tgt_ids + [EOS_token]
+            
+    def __getitem__(self, index):
+        input_id = torch.tensor(self.input_ids[index])
+        input_len = self.input_lens[index]
+        target_id_SOS = torch.tensor(self.target_ids_SOS[index])
+        target_id_EOS = torch.tensor(self.target_ids_EOS[index])
+        return input_id, input_len, target_id_SOS, target_id_EOS
+
+    def __len__(self):
+        return self.size
+    
+    def decode(self, index, En = True):
+        """Given index, return the word in dictionary"""
+        if En:
+            return self.input_lang.index2word[index]
+        else:
+            return self.output_lang.index2word[index]
+
+# ================================================================================
 # Testing
 
 if __name__ == "__main__":
-    input_lang, output_lang, pairs = prepareData('eng', 'fra', False)
-    print("\nSample word:", random.choice(list(input_lang.word2index.items())))
-    print("Sample word:", random.choice(list(output_lang.word2index.items())))
-    print("Sample pair:", random.choice(pairs))
+    # input_lang, output_lang, pairs = buildLang('eng', 'fra', MAX_LENGTH)
+    # print("\nSample word:", random.choice(list(input_lang.word2index.items())))
+    # print("Sample word:", random.choice(list(output_lang.word2index.items())))
+    # print("Sample pair:", random.choice(pairs))
+    
+    dataset = EnFrDataset()
+    input, input_len, target_S, target_E = dataset[0]
+    print("\nSample data:")
+    print([dataset.decode(index.item()) for index in input])
+    print(input_len)
+    print([dataset.decode(index.item(), En=False) for index in target_S])
+    print([dataset.decode(index.item(), En=False) for index in target_E])
