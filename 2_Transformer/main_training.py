@@ -79,3 +79,6 @@ def get_dataloaders():
 # ================================================================================
 # Instantiate and train model
 
+input_lang, output_lang, train_loader, valid_loader = get_dataloaders()
+data, label = train_loader.next()
+print(data.shape)

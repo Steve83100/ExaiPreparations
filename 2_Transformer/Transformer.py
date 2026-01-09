@@ -351,9 +351,9 @@ class Transformer(nn.Module):
         self.encoder = Encoder(vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_blks, dropout, use_bias)
         self.decoder = Decoder(vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_blks, dropout)
 
-    def forward(self, enc_X, dec_X, *args):
-        enc_outputs = self.encoder(enc_X, *args)
-        dec_state = self.decoder.init_state(enc_outputs, *args)
+    def forward(self, enc_X, dec_X, enc_valid_lens):
+        enc_outputs = self.encoder(enc_X, enc_valid_lens)
+        dec_state = self.decoder.init_state(enc_outputs, enc_valid_lens)
         return self.decoder(dec_X, dec_state)[0]
 
 
@@ -361,15 +361,15 @@ class Transformer(nn.Module):
 if __name__ == "__main__":
     print("Testing...")
     
-    # X = torch.ones((2, 100, 24))
-    # valid_lens = torch.tensor([30, 20])
+    # X = torch.rand((2, 100, 200)) # batchsize = 2, seqlen = 100, vocabsize = 200
+    # valid_lens = torch.tensor([50, 20])
     # print(X.shape)
 
-    # encoder_blk = EncoderBlock(24, 48, 8, 0.5)
+    # encoder_blk = EncoderBlock(200, 32, 8, 0.5)
     # Y = encoder_blk(X, valid_lens)
     # print(Y.shape)
 
-    # decoder_blk = DecoderBlock(24, 48, 8, 0.5, 0)
+    # decoder_blk = DecoderBlock(200, 32, 8, 0.5, 0)
     # state = [Y, valid_lens, [None]]
     # Z, new_state = decoder_blk(X, state)
     # print(Z.shape)
@@ -378,5 +378,22 @@ if __name__ == "__main__":
     # print(decoder_blk.self_attn_weights.shape)
     # print(decoder_blk.cross_attn_weights.shape)
     
-    model = Transformer(100, 24, 48, 8, 3, 0.5)
-    print(model)
+    # =================================================================
+    
+    # In our complete transformer, we first go through nn.Embedding,
+    # which expects word indexes as input, instead of one-hot vectors.
+    # Therefore we only need a 2D input (batchsize * seqlen), each value is a word index
+    X = torch.randint(0, 200, (2, 100))
+    valid_lens = torch.tensor([50, 20])
+    
+    model = Transformer(
+        vocab_size=200,
+        embed_dim=32,
+        ffn_num_hiddens=64,
+        num_heads=8,
+        num_blks=3,
+        dropout=0.5
+        )
+    # print(model)
+    print(X.shape)
+    print(model(X, X, valid_lens).shape)
