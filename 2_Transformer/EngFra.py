@@ -11,15 +11,15 @@ from torch.utils.data import Dataset
 # ================================================================================
 # Dictionary for a language. Contains "word -> index" and "index -> word" mappings
 
-SOS_token = 0
-EOS_token = 1
+SOS_token = 1
+EOS_token = 0 # Make EOS equal 0, so that empty slots are filled with EOS
 
 class Lang:
     def __init__(self, name):
         self.name = name
         self.word2index = {}
         self.word2count = {}
-        self.index2word = {0: "<SOS>", 1: "<EOS>"}
+        self.index2word = {1: "<SOS>", 0: "<EOS>"}
         self.n_words = 2  # Count SOS and EOS
 
     def addSentence(self, sentence):
@@ -74,18 +74,15 @@ def readLangs(lang1, lang2, reverse=False):
 # ================================================================================
 # Filter sentences by length and content
 
-def filterPair(p, max_length, prefixes):
+def filterPair(p, max_len, prefixes):
     return (
-        (len(p[0].split(' ')) < max_length and len(p[1].split(' ')) < max_length)
+        (len(p[0].split(' ')) < max_len and len(p[1].split(' ')) < max_len)
         and
         (p[0].startswith(prefixes) or p[1].startswith(prefixes))
         )
 
-def filterPairs(pairs, max_length, prefixes):
-    return [pair for pair in pairs if filterPair(pair, max_length, prefixes)]
-
-# By default keeps sentences no longer than 10 words
-MAX_LENGTH = 10
+def filterPairs(pairs, max_len, prefixes):
+    return [pair for pair in pairs if filterPair(pair, max_len, prefixes)]
 
 # By default keeps sentences starting with "i am" "i'm" "he is"...
 PREFIXES = (
@@ -102,23 +99,23 @@ PREFIXES = (
 # ================================================================================
 # Complete Lang building
 
-def buildLang(lang1, lang2, max_length, prefixes = PREFIXES, reverse=False):
+def buildLang(lang1, lang2, max_len, prefixes = PREFIXES, reverse=False):
     '''
     Prepares language translation data
     
     :param lang1: input language, such as "eng"
     :param lang2: output language, such as "fra"
-    :param max_length: length limit of sentences. Will filter out sentences with exceeding length
+    :param max_len: length limit of sentences. Will filter out sentences with exceeding length
     :param prefixes: prefix limit of sentences. Will filter out sentences not starting with them
     :param reverse: whether to reverse input and output language
     '''
     
-    print("Reading dataset...")
+    print("\nReading dataset...")
     input_lang, output_lang, pairs = readLangs(lang1, lang2, reverse)
     print("Total: %s sentence pairs" % len(pairs))
     
     print("\nFiltering dataset...")
-    pairs = filterPairs(pairs, max_length, prefixes)
+    pairs = filterPairs(pairs, max_len, prefixes)
     print("Remaining: %s sentence pairs" % len(pairs))
     
     print("\nAdding words to dictionary...")
@@ -156,35 +153,33 @@ def indexesFromSentence(lang, sentence):
 # Create dataset for translation
 class EnFrDataset(Dataset):
     """English to French dataset, contains: (en, en_len, SOS+fr, fr+EOS)."""
-    def __init__(self, max_length = MAX_LENGTH):
+    def __init__(self, max_len):
         super().__init__()
         
         # Load dictionary and pairs
-        self.input_lang, self.output_lang, self.pairs = buildLang('eng', 'fra', max_length)
+        self.input_lang, self.output_lang, self.pairs = buildLang('eng', 'fra', max_len)
         self.size = len(self.pairs)
         
-        # Create empty sequence vectors
-        self.input_ids = (np.zeros((self.size, MAX_LENGTH), dtype=np.int32))
+        # Create empty sequence vectors (0 means EOS)
+        self.input_ids = (np.zeros((self.size, max_len), dtype=np.int32))
         self.input_lens = (np.zeros((self.size), dtype=np.int32))
-        self.target_ids_SOS = (np.zeros((self.size, MAX_LENGTH), dtype=np.int32))
-        self.target_ids_EOS = (np.zeros((self.size, MAX_LENGTH), dtype=np.int32))
+        self.target_ids_SOS = (np.zeros((self.size, max_len), dtype=np.int32))
+        self.target_ids_EOS = (np.zeros((self.size, max_len), dtype=np.int32))
 
         # Fill each sequence vector with a sentence of word indexes
-        # For input sequence, also record length
-        # For target sequence, separately append SOS and EOS
         for idx, (inp, tgt) in enumerate(self.pairs):
             inp_ids = indexesFromSentence(self.input_lang, inp)
             tgt_ids = indexesFromSentence(self.output_lang, tgt)
             self.input_ids[idx, :len(inp_ids)] = inp_ids
-            self.input_lens[idx] = len(inp_ids)
-            self.target_ids_SOS[idx, :(len(tgt_ids)+1)] = [SOS_token] + tgt_ids
-            self.target_ids_EOS[idx, :(len(tgt_ids)+1)] = tgt_ids + [EOS_token]
+            self.input_lens[idx] = len(inp_ids) # For input sequence, also record length
+            self.target_ids_SOS[idx, :(len(tgt_ids)+1)] = [SOS_token] + tgt_ids # For target sequence, append SOS
+            self.target_ids_EOS[idx, :(len(tgt_ids)+1)] = tgt_ids + [EOS_token] # EOS not necessary, as it's initialized with 0
             
     def __getitem__(self, index):
-        input_id = torch.tensor(self.input_ids[index])
+        input_id = torch.tensor(self.input_ids[index], dtype=torch.long)
         input_len = self.input_lens[index]
-        target_id_SOS = torch.tensor(self.target_ids_SOS[index])
-        target_id_EOS = torch.tensor(self.target_ids_EOS[index])
+        target_id_SOS = torch.tensor(self.target_ids_SOS[index], dtype=torch.long)
+        target_id_EOS = torch.tensor(self.target_ids_EOS[index], dtype=torch.long)
         return input_id, input_len, target_id_SOS, target_id_EOS
 
     def __len__(self):
@@ -201,12 +196,14 @@ class EnFrDataset(Dataset):
 # Testing
 
 if __name__ == "__main__":
-    # input_lang, output_lang, pairs = buildLang('eng', 'fra', MAX_LENGTH)
+    print("Testing...")
+    
+    # input_lang, output_lang, pairs = buildLang('eng', 'fra', MAX_LEN)
     # print("\nSample word:", random.choice(list(input_lang.word2index.items())))
     # print("Sample word:", random.choice(list(output_lang.word2index.items())))
     # print("Sample pair:", random.choice(pairs))
     
-    dataset = EnFrDataset()
+    dataset = EnFrDataset(20)
     input, input_len, target_S, target_E = dataset[0]
     print("\nSample data:")
     print([dataset.decode(index.item()) for index in input])

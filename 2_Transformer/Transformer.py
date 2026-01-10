@@ -1,9 +1,7 @@
+import math
 import torch
 import torch.nn as nn
-from torch import optim
-import torch.nn.functional as F
-import numpy as np
-import math
+from torchinfo import summary
 
 
 def sequence_mask(valid_lens, max_len):
@@ -113,15 +111,15 @@ class FFN(nn.Module):
 
 class EncoderBlock(nn.Module):
     """The Transformer encoder block."""
-    def __init__(self, embed_dim, ffn_num_hiddens, num_heads, dropout, use_bias=False):
+    def __init__(self, embed_dim, ffn_num_hiddens, num_heads, dropout, use_bias):
         super().__init__()
-        self.attention = nn.MultiheadAttention(embed_dim, num_heads, dropout, use_bias, batch_first=True, )
+        self.attention = nn.MultiheadAttention(embed_dim, num_heads, dropout, use_bias, batch_first=True)
         self.addnorm1 = AddNorm(embed_dim, dropout)
         self.ffn = FFN(ffn_num_hiddens, embed_dim) # ffn_num_outputs = embed_dim, matching input X
         self.addnorm2 = AddNorm(embed_dim, dropout)
 
-    def forward(self, X, valid_lens):
-        enc_mask = sequence_mask(valid_lens, X.shape[1])
+    def forward(self, X, valid_lens, max_len):
+        enc_mask = sequence_mask(valid_lens, max_len)
         Attn, self.attn_weights = self.attention(X, X, X, key_padding_mask=enc_mask)
         Y = self.addnorm1(X, Attn)
         return self.addnorm2(Y, self.ffn(Y))
@@ -155,24 +153,23 @@ class EncoderBlock(nn.Module):
 
 class Encoder(nn.Module):
     """The Transformer encoder."""
-    def __init__(self, vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_blks, dropout, use_bias):
+    def __init__(self, input_vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_blks, dropout, use_bias):
         super().__init__()
         self.embed_dim = embed_dim
-        self.embedding = nn.Embedding(vocab_size, embed_dim)
+        self.embedding = nn.Embedding(input_vocab_size, embed_dim)
         self.pos_encoding = PositionalEncoding(embed_dim, dropout)
         self.blks = nn.Sequential()
         for i in range(num_blks):
-            self.blks.add_module("block"+str(i),
-                                 EncoderBlock(embed_dim, ffn_num_hiddens, num_heads, dropout, use_bias))
+            self.blks.add_module("EncBlock"+str(i), EncoderBlock(embed_dim, ffn_num_hiddens, num_heads, dropout, use_bias))
 
-    def forward(self, X, valid_lens):
+    def forward(self, X, valid_lens, max_len):
         # Since positional encoding values are between -1 and 1, the embedding
         # values are multiplied by the square root of the embedding dimension
         # to rescale before they are summed up
         X = self.pos_encoding(self.embedding(X) * math.sqrt(self.embed_dim))
         self.attention_weights = [None] * len(self.blks)
         for i, blk in enumerate(self.blks):
-            X = blk(X, valid_lens)
+            X = blk(X, valid_lens, max_len)
             self.attention_weights[i] = blk.attn_weights
         return X
 
@@ -197,33 +194,34 @@ class Encoder(nn.Module):
 
 class DecoderBlock(nn.Module):
     """The i-th block in the Transformer decoder."""
-    def __init__(self, embed_dim, ffn_num_hiddens, num_heads, dropout, i):
+    def __init__(self, embed_dim, ffn_num_hiddens, num_heads, dropout, i, use_bias):
         super().__init__()
         self.i = i
-        self.attention1 = nn.MultiheadAttention(embed_dim, num_heads, dropout, batch_first=True)
+        self.attention1 = nn.MultiheadAttention(embed_dim, num_heads, dropout, use_bias, batch_first=True)
         self.addnorm1 = AddNorm(embed_dim, dropout)
-        self.attention2 = nn.MultiheadAttention(embed_dim, num_heads, dropout, batch_first=True)
+        self.attention2 = nn.MultiheadAttention(embed_dim, num_heads, dropout, use_bias, batch_first=True)
         self.addnorm2 = AddNorm(embed_dim, dropout)
         self.ffn = FFN(ffn_num_hiddens, embed_dim)
         self.addnorm3 = AddNorm(embed_dim, dropout)
 
-    def forward(self, X, state):
+    def forward(self, X, state, autoreg):
         # state[0] is EncBlock's output with size (b, n, d), used as K and V in enc-dec attention.
         # state[1] with size (b) specifies the valid length in each sequence in state[0].
-        enc_outputs, enc_valid_lens = state[0], state[1]
-        enc_mask = sequence_mask(enc_valid_lens, X.shape[1])
+        # state[2] is an integer specifying maximum input sequence length.
+        enc_outputs, enc_valid_lens, max_len = state[0], state[1], state[2]
+        enc_mask = sequence_mask(enc_valid_lens, max_len)
         
-        # state[2] is the entire decoder's KV Cache, and state[2][i] is the cache for block i with size (b, 0~n, d).
-        # During prediction, token outputs one at a time, so in each time step, an entire pass accross all blocks is done.
-        # Within one pass, in each block, state[2] is updated so that state[2][i] stores block i's input up to now.
-        # Then, state[2][i] containing "all tokens up to now" is used as K and V during self-attention.
-        if state[2][self.i] is None:
+        # With autoregression, model outputs token one at a time, so in each time step, an entire pass accross all blocks is done.
+        # state[3] is the entire decoder's KV Cache, and state[3][i] is the cache for block i with size (b, 0~n, d).
+        # Within one pass, in each block, state[3] is updated so that state[3][i] stores block i's input up to now.
+        # Then, state[3][i] containing "all tokens up to now" is used as K and V during self-attention.
+        if state[3][self.i] is None:
             key_values = X
         else:
-            key_values = torch.cat((state[2][self.i], X), dim=1)
-        state[2][self.i] = key_values
+            key_values = torch.cat((state[3][self.i], X), dim=1)
+        state[3][self.i] = key_values
         
-        # Note that instead of self-regression, we use actual label as input duing training.
+        # Note that instead of self-regression, we use actual label as input duing teacher-forcing.
         # Therefore, output can be processed in parallel, and no KV Caching is needed.
         # But we still need to ensure that each time step only sees tokens up to now.
         # So we create attn_mask, which has size (n, n) and contains:
@@ -235,14 +233,14 @@ class DecoderBlock(nn.Module):
         # ]
         # This will be identically broadcasted to each batch, masking out future tokens during self-attention.
         # For example, query 1 can only see the first token (itself); query 2 can see token 1 and 2.
-        if self.training:
+        if autoreg:
+            attn_mask = None
+        else:
             num_steps = X.shape[1]
             attn_mask = torch.triu(
                 torch.ones(num_steps, num_steps, dtype=torch.bool, device=X.device),
                 diagonal=1
             )
-        else:
-            attn_mask = None
             
         Attn1, self.self_attn_weights = self.attention1(X, key_values, key_values, attn_mask=attn_mask) # Self-attention
         Y = self.addnorm1(X, Attn1)
@@ -291,26 +289,26 @@ class DecoderBlock(nn.Module):
 
 class Decoder(nn.Module):
     """The Transformer encoder."""
-    def __init__(self, vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_blks, dropout):
+    def __init__(self, output_vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_blks, dropout, use_bias):
         super().__init__()
         self.embed_dim = embed_dim
         self.num_blks = num_blks
-        self.embedding = nn.Embedding(vocab_size, embed_dim)
+        self.embedding = nn.Embedding(output_vocab_size, embed_dim)
         self.pos_encoding = PositionalEncoding(embed_dim, dropout)
         self.blks = nn.Sequential()
         for i in range(num_blks):
-            self.blks.add_module("block"+str(i), DecoderBlock(embed_dim, ffn_num_hiddens, num_heads, dropout, i))
-        self.dense = nn.LazyLinear(vocab_size)
+            self.blks.add_module("DecBlock"+str(i), DecoderBlock(embed_dim, ffn_num_hiddens, num_heads, dropout, i, use_bias))
+        self.dense = nn.LazyLinear(output_vocab_size)
 
-    def init_state(self, enc_outputs, enc_valid_lens):
+    def init_state(self, enc_outputs, enc_valid_lens, max_len):
         """Given encoder outputs, initializes a state to be shared across layers."""
-        return [enc_outputs, enc_valid_lens, [None] * self.num_blks]
+        return [enc_outputs, enc_valid_lens, max_len, [None] * self.num_blks]
 
-    def forward(self, X, state):
+    def forward(self, X, state, autoreg):
         X = self.pos_encoding(self.embedding(X) * math.sqrt(self.embed_dim))
         self.attention_weights = [[None] * len(self.blks) for _ in range (2)]
         for i, blk in enumerate(self.blks):
-            X, state = blk(X, state)
+            X, state = blk(X, state, autoreg)
             self.attention_weights[0][i] = blk.self_attn_weights # Decoder self-attention weights
             self.attention_weights[1][i] = blk.cross_attn_weights # Encoder-decoder attention weights
         return self.dense(X), state
@@ -346,16 +344,43 @@ class Decoder(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_blks, dropout, use_bias=False):
+    def __init__(self, input_vocab_size, output_vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_layers, dropout, use_bias=False):
         super().__init__()
-        self.encoder = Encoder(vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_blks, dropout, use_bias)
-        self.decoder = Decoder(vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_blks, dropout)
+        print("\nCreating Transformer...")
+        self.encoder = Encoder(input_vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_layers, dropout, use_bias)
+        self.decoder = Decoder(output_vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_layers, dropout, use_bias)
 
-    def forward(self, enc_X, dec_X, enc_valid_lens):
-        enc_outputs = self.encoder(enc_X, enc_valid_lens)
-        dec_state = self.decoder.init_state(enc_outputs, enc_valid_lens)
-        return self.decoder(dec_X, dec_state)[0]
+    def forward(self, enc_X, dec_X, enc_valid_lens, max_len, autoreg=False):
+        """
+        If autoreg = True, use auto-regression, which produces max_len tokens one by one, starting with dec_X.
+        Uses only the newly-predicted token as decoder input, and save entire history in KV Cache.
+        
+        If autoreg = False, use teacher-forcing, which uses target sequence dec_X as decoder input, producing all tokens at once.
+        """
+        enc_outputs = self.encoder(enc_X, enc_valid_lens, max_len)
+        state = self.decoder.init_state(enc_outputs, enc_valid_lens, max_len)
+        
+        if autoreg:
+            # Store all outputs, not including the initial <SOS>
+            outputs = []
+            
+            # Generate tokens one by one, and update dec_input
+            dec_input = dec_X
+            for _ in range(max_len):
+                output, state = self.decoder(dec_input, state, True) # output: (batch_size, 1, vocab_size)
+                outputs.append(output)
+                predicted = output.argmax(dim=-1) # Greedily sample a token from distribution: (batch_size, 1)
+                dec_input = predicted
+            
+            # Concatenate all outputs: List of (batch_size, 1, vocab_size) -> (batch_size, max_len, vocab_size)
+            outputs = torch.cat(outputs, dim=1)
+            return outputs
+            
+        else:
+            return self.decoder(dec_X, state, False)[0]
 
+# ====================================================================
+        
 
 
 if __name__ == "__main__":
@@ -380,20 +405,33 @@ if __name__ == "__main__":
     
     # =================================================================
     
+    BATCH_SIZE = 64
+    INPUT_VOC = 200
+    OUTPUT_VOC = 150
+    MAX_LEN = 100
+    
     # In our complete transformer, we first go through nn.Embedding,
     # which expects word indexes as input, instead of one-hot vectors.
-    # Therefore we only need a 2D input (batchsize * seqlen), each value is a word index
-    X = torch.randint(0, 200, (2, 100))
-    valid_lens = torch.tensor([50, 20])
+    # Therefore we only need 2D input (batchsize * seqlen), each value is a word index
+    X = torch.randint(0, INPUT_VOC, (BATCH_SIZE, MAX_LEN))
+    valid_lens = torch.randint(10, 800, (BATCH_SIZE,))
+    Y = torch.randint(0, OUTPUT_VOC, (BATCH_SIZE, 31))
+    start = torch.ones((BATCH_SIZE, 1), dtype=int)
     
     model = Transformer(
-        vocab_size=200,
+        input_vocab_size=200,
+        output_vocab_size=150,
         embed_dim=32,
         ffn_num_hiddens=64,
         num_heads=8,
-        num_blks=3,
+        num_layers=6,
         dropout=0.5
         )
+    
     # print(model)
     print(X.shape)
-    print(model(X, X, valid_lens).shape)
+    print(Y.shape)
+    print(start.shape)
+    print(model(X, Y, valid_lens, MAX_LEN, False).shape) # teacher-forcing
+    print(model(X, start, valid_lens, MAX_LEN, True).shape) # auto-regression
+    # summary(model, input_data = [X, Y, valid_lens])
