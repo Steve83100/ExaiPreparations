@@ -118,15 +118,16 @@ class EncoderBlock(nn.Module):
         self.ffn = FFN(ffn_num_hiddens, embed_dim) # ffn_num_outputs = embed_dim, matching input X
         self.addnorm2 = AddNorm(embed_dim, dropout)
 
-    def forward(self, X, valid_lens, max_len):
-        enc_mask = sequence_mask(valid_lens, max_len)
+    def forward(self, X, valid_lens):
+        in_len = X.shape[1]
+        enc_mask = sequence_mask(valid_lens, in_len)
         Attn, self.attn_weights = self.attention(X, X, X, key_padding_mask=enc_mask)
         Y = self.addnorm1(X, Attn)
         return self.addnorm2(Y, self.ffn(Y))
     
 # <EncBlock>:
 #
-#      X (b, n, d)
+#      X (b, in_n, d)
 #      |
 #  ---------
 #  |       |
@@ -134,60 +135,60 @@ class EncoderBlock(nn.Module):
 #  |    |  |  |
 #  |    q  k  v
 #  |    |  |  |
-#  |   attention (b, n, d) -> (b, n, d*h:num_heads) -> (b, n, d)
+#  |   attention (b, in_n, d) -> (b, in_n, d*h:num_heads) -> (b, in_n, d)
 #  |       |
 #  <AddNorm>
 #      |
-#      Y (b, n, d)
+#      Y (b, in_n, d)
 #      |
 #  ---------
 #  |       |
-#  |     <FFN> (b, n, d) -> (b, n, ffn_num_hiddens) -> (b, n, d)
+#  |     <FFN> (b, in_n, d) -> (b, in_n, ffn_num_hiddens) -> (b, in_n, d)
 #  |       |
 #  <AddNorm>
 #      |
-#     out (b, n, d)
+#     out (b, in_n, d)
 
 # ====================================================================
 
 
 class Encoder(nn.Module):
     """The Transformer encoder."""
-    def __init__(self, input_vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_blks, dropout, use_bias):
+    def __init__(self, input_vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_layers, dropout, use_bias):
         super().__init__()
         self.embed_dim = embed_dim
         self.embedding = nn.Embedding(input_vocab_size, embed_dim)
         self.pos_encoding = PositionalEncoding(embed_dim, dropout)
         self.blks = nn.Sequential()
-        for i in range(num_blks):
+        for i in range(num_layers):
             self.blks.add_module("EncBlock"+str(i), EncoderBlock(embed_dim, ffn_num_hiddens, num_heads, dropout, use_bias))
 
-    def forward(self, X, valid_lens, max_len):
+    def forward(self, X, valid_lens):
         # Since positional encoding values are between -1 and 1, the embedding
         # values are multiplied by the square root of the embedding dimension
         # to rescale before they are summed up
         X = self.pos_encoding(self.embedding(X) * math.sqrt(self.embed_dim))
         self.attention_weights = [None] * len(self.blks)
         for i, blk in enumerate(self.blks):
-            X = blk(X, valid_lens, max_len)
+            X = blk(X, valid_lens)
             self.attention_weights[i] = blk.attn_weights
         return X
 
 # <Encoder>:
 #
-#      X (b, n, v:vocab_size)
+#      X (b, in_n, v:vocab_size)
 #      |
-#    embed (b, n, v) -> (b, n, d)
+#    embed (b, in_n, v) -> (b, in_n, d)
 #      |
-#  <Position> (b, n, d)
+#  <Position> (b, in_n, d)
 #      |
-#  <EncBlock> (b, n, d)
+#  <EncBlock> (b, in_n, d)
 #      |
-#     ... (total of num_blks blocks)
+#     ... (total of num_layers blocks)
 #      |
 #  <EncBlock>
 #      |
-#     out (b, n, d)
+#     out (b, in_n, d)
 
 # ====================================================================
 
@@ -207,19 +208,19 @@ class DecoderBlock(nn.Module):
     def forward(self, X, state, autoreg):
         # state[0] is EncBlock's output with size (b, n, d), used as K and V in enc-dec attention.
         # state[1] with size (b) specifies the valid length in each sequence in state[0].
-        # state[2] is an integer specifying maximum input sequence length.
-        enc_outputs, enc_valid_lens, max_len = state[0], state[1], state[2]
-        enc_mask = sequence_mask(enc_valid_lens, max_len)
+        enc_outputs, enc_valid_lens = state[0], state[1]
+        in_len = enc_outputs.shape[1]
+        enc_mask = sequence_mask(enc_valid_lens, in_len)
         
         # With autoregression, model outputs token one at a time, so in each time step, an entire pass accross all blocks is done.
-        # state[3] is the entire decoder's KV Cache, and state[3][i] is the cache for block i with size (b, 0~n, d).
-        # Within one pass, in each block, state[3] is updated so that state[3][i] stores block i's input up to now.
-        # Then, state[3][i] containing "all tokens up to now" is used as K and V during self-attention.
-        if state[3][self.i] is None:
+        # state[2] is the entire decoder's KV Cache, and state[2][i] is the cache for block i with size (b, 0~n, d).
+        # Within one pass, in each block, state[2] is updated so that state[2][i] stores block i's input up to now.
+        # Then, state[2][i] containing "all tokens up to now" is used as K and V during self-attention.
+        if state[2][self.i] is None:
             key_values = X
         else:
-            key_values = torch.cat((state[3][self.i], X), dim=1)
-        state[3][self.i] = key_values
+            key_values = torch.cat((state[2][self.i], X), dim=1)
+        state[2][self.i] = key_values
         
         # Note that instead of self-regression, we use actual label as input duing teacher-forcing.
         # Therefore, output can be processed in parallel, and no KV Caching is needed.
@@ -250,7 +251,7 @@ class DecoderBlock(nn.Module):
     
 # <DecBlock>:
 #
-#      X (b, n, d)
+#      X (b, out_n, d)
 #      |
 #  ---------
 #  |       |
@@ -258,51 +259,51 @@ class DecoderBlock(nn.Module):
 #  |    |  |  |
 #  |    q  k  v
 #  |    |  |  |
-#  |   attention (b, n, d) -> (b, n, d*h:num_heads) -> (b, n, d)
+#  |   attention (b, out_n, d) -> (b, out_n, d*h:num_heads) -> (b, out_n, d)
 #  |       |
 #  <AddNorm>
 #      |
-#      Y (b, n, d)
+#      Y (b, out_n, d)
 #      |
-#  ------     enc_outputs (b, n, d)
+#  ------     enc_outputs (b, in_n, d)
 #  |    |     |
 #  |    |  ----
 #  |    |  |  |
 #  |    q  k  v
 #  |    |  |  |
-#  |   attention (b, n, d) -> (b, n, d*h:num_heads) -> (b, n, d)
+#  |   attention (b, out_n, d) -> (b, out_n, d*h:num_heads) -> (b, out_n, d)
 #  |       |
 #  <AddNorm>
 #      |
-#      Y2 (b, n, d)
+#      Y2 (b, out_n, d)
 #      |
 #  ---------
 #  |       |
-#  |     <FFN> (b, n, d) -> (b, n, ffn_num_hiddens) -> (b, n, d)
+#  |     <FFN> (b, out_n, d) -> (b, out_n, ffn_num_hiddens) -> (b, out_n, d)
 #  |       |
 #  <AddNorm>
 #      |
-#     out (b, n, d)
+#     out (b, out_n, d)
 
 # ====================================================================
 
 
 class Decoder(nn.Module):
     """The Transformer encoder."""
-    def __init__(self, output_vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_blks, dropout, use_bias):
+    def __init__(self, output_vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_layers, dropout, use_bias):
         super().__init__()
         self.embed_dim = embed_dim
-        self.num_blks = num_blks
+        self.num_layers = num_layers
         self.embedding = nn.Embedding(output_vocab_size, embed_dim)
         self.pos_encoding = PositionalEncoding(embed_dim, dropout)
         self.blks = nn.Sequential()
-        for i in range(num_blks):
+        for i in range(num_layers):
             self.blks.add_module("DecBlock"+str(i), DecoderBlock(embed_dim, ffn_num_hiddens, num_heads, dropout, i, use_bias))
         self.dense = nn.LazyLinear(output_vocab_size)
 
-    def init_state(self, enc_outputs, enc_valid_lens, max_len):
+    def init_state(self, enc_outputs, enc_valid_lens):
         """Given encoder outputs, initializes a state to be shared across layers."""
-        return [enc_outputs, enc_valid_lens, max_len, [None] * self.num_blks]
+        return [enc_outputs, enc_valid_lens, [None] * self.num_layers]
 
     def forward(self, X, state, autoreg):
         X = self.pos_encoding(self.embedding(X) * math.sqrt(self.embed_dim))
@@ -315,13 +316,13 @@ class Decoder(nn.Module):
     
 # <Decoder>:
 #
-#      X (b, n, v:vocab_size)
+#      X (b, out_n, v:vocab_size)
 #      |
-#    embed (b, n, v) -> (b, n, d)
+#    embed (b, out_n, v) -> (b, out_n, d)
 #      |
-#  <Position> (b, n, d)
+#  <Position> (b, out_n, d)
 #      |
-#      |       enc_outputs (b, n, d)
+#      |       enc_outputs (b, in_n, d)
 #      |      /|
 #      ------- |
 #      |       |
@@ -334,31 +335,36 @@ class Decoder(nn.Module):
 #      |      /
 #      -------
 #      |
-#  <DecBlock> (b, n, d)
+#  <DecBlock> (b, out_n, d)
 #      |
-#    dense (b, n, d) -> (b, n, v)
+#    dense (b, out_n, d) -> (b, out_n, v)
 #      |
-#     out (b, n, v)
+#     out (b, out_n, v)
 
 # ====================================================================
 
 
 class Transformer(nn.Module):
+    """The Transformer model."""
     def __init__(self, input_vocab_size, output_vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_layers, dropout, use_bias=False):
         super().__init__()
         print("\nCreating Transformer...")
         self.encoder = Encoder(input_vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_layers, dropout, use_bias)
         self.decoder = Decoder(output_vocab_size, embed_dim, ffn_num_hiddens, num_heads, num_layers, dropout, use_bias)
 
-    def forward(self, enc_X, dec_X, enc_valid_lens, max_len, autoreg=False):
+    def forward(self, enc_X, dec_X, enc_valid_lens, out_len, autoreg=False):
         """
+        enc_X have shape (batch_size, in_len, embed_dim), where in_len is the length of every input sequence.
+        
         If autoreg = True, use auto-regression, which produces max_len tokens one by one, starting with dec_X.
         Uses only the newly-predicted token as decoder input, and save entire history in KV Cache.
+        In this case, starting sequence dec_X has shape (batch_size, 1, embed_dim), and will output (batch_size, out_len, embed_dim).
         
         If autoreg = False, use teacher-forcing, which uses target sequence dec_X as decoder input, producing all tokens at once.
+        In this case, target sequence dec_X has shape (batch_size, out_len, embed_dim), and so does output.
         """
-        enc_outputs = self.encoder(enc_X, enc_valid_lens, max_len)
-        state = self.decoder.init_state(enc_outputs, enc_valid_lens, max_len)
+        enc_outputs = self.encoder(enc_X, enc_valid_lens)
+        state = self.decoder.init_state(enc_outputs, enc_valid_lens)
         
         if autoreg:
             # Store all outputs, not including the initial <SOS>
@@ -366,7 +372,7 @@ class Transformer(nn.Module):
             
             # Generate tokens one by one, and update dec_input
             dec_input = dec_X
-            for _ in range(max_len):
+            for _ in range(out_len):
                 output, state = self.decoder(dec_input, state, True) # output: (batch_size, 1, vocab_size)
                 outputs.append(output)
                 predicted = output.argmax(dim=-1) # Greedily sample a token from distribution: (batch_size, 1)
@@ -380,7 +386,7 @@ class Transformer(nn.Module):
             return self.decoder(dec_X, state, False)[0]
 
 # ====================================================================
-        
+
 
 
 if __name__ == "__main__":
@@ -408,14 +414,15 @@ if __name__ == "__main__":
     BATCH_SIZE = 64
     INPUT_VOC = 200
     OUTPUT_VOC = 150
-    MAX_LEN = 100
+    IN_LEN = 100
+    OUT_LEN = 90
     
     # In our complete transformer, we first go through nn.Embedding,
     # which expects word indexes as input, instead of one-hot vectors.
-    # Therefore we only need 2D input (batchsize * seqlen), each value is a word index
-    X = torch.randint(0, INPUT_VOC, (BATCH_SIZE, MAX_LEN))
+    # Therefore we only need 2D input (batchsize, seqlen), each value is a word index
+    X = torch.randint(0, INPUT_VOC, (BATCH_SIZE, IN_LEN))
     valid_lens = torch.randint(10, 800, (BATCH_SIZE,))
-    Y = torch.randint(0, OUTPUT_VOC, (BATCH_SIZE, 31))
+    Y = torch.randint(0, OUTPUT_VOC, (BATCH_SIZE, OUT_LEN))
     start = torch.ones((BATCH_SIZE, 1), dtype=int)
     
     model = Transformer(
@@ -432,6 +439,6 @@ if __name__ == "__main__":
     print(X.shape)
     print(Y.shape)
     print(start.shape)
-    print(model(X, Y, valid_lens, MAX_LEN, False).shape) # teacher-forcing
-    print(model(X, start, valid_lens, MAX_LEN, True).shape) # auto-regression
+    print(model(X, Y, valid_lens, OUT_LEN, False).shape) # teacher-forcing
+    print(model(X, start, valid_lens, OUT_LEN, True).shape) # auto-regression
     # summary(model, input_data = [X, Y, valid_lens])

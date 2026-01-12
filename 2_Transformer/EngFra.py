@@ -4,7 +4,9 @@ import re
 import random
 import numpy as np
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, random_split, DataLoader, RandomSampler
+
+torch.manual_seed(86)
 
 
 
@@ -151,6 +153,7 @@ def indexesFromSentence(lang, sentence):
 
 # ================================================================================
 # Create dataset for translation
+
 class EnFrDataset(Dataset):
     """English to French dataset, contains: (en, en_len, SOS+fr, fr+EOS)."""
     def __init__(self, max_len):
@@ -191,6 +194,27 @@ class EnFrDataset(Dataset):
             return self.input_lang.index2word[index]
         else:
             return self.output_lang.index2word[index]
+
+
+
+# ================================================================================
+# Create training and validating dataloaders
+
+def get_dataloaders(max_len, batch_size, train_ratio):
+    dataset = EnFrDataset(max_len)
+    
+    # Split dataset into train and validation
+    train_size = int(train_ratio * len(dataset))
+    valid_size = len(dataset) - train_size # Remaining size
+    train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
+
+    # Create dataloaders
+    train_loader = DataLoader(train_dataset, shuffle = True, batch_size = batch_size)
+    valid_loader = DataLoader(valid_dataset, shuffle = False, batch_size = batch_size)
+    
+    return dataset, train_loader, valid_loader
+
+
 
 # ================================================================================
 # Testing
