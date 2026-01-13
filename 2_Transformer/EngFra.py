@@ -4,7 +4,7 @@ import re
 import random
 import numpy as np
 import torch
-from torch.utils.data import Dataset, random_split, DataLoader, RandomSampler
+from torch.utils.data import Dataset, random_split, DataLoader
 
 torch.manual_seed(86)
 

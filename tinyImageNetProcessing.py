@@ -3,6 +3,8 @@ import os
 from shutil import move
 from os import rmdir
 
+
+
 # Original validation folder has structure:
 #
 # val
@@ -27,6 +29,7 @@ from os import rmdir
 #
 # This structure can be loaded with torchvision.datasets.ImageFolder.
 # ImageFolder() will automatically scan through the structure, assign indexes to class types, and create (image, type) tuples
+# ImageFolder() also maps index -> class and class -> index in its attributes classes (list) and class_to_idx (dict)
 
 target_folder = 'D:/Coding/DeepLearning/Datasets/tiny-imagenet-200/val/'
 
@@ -35,6 +38,7 @@ with open('D:/Coding/DeepLearning/Datasets/tiny-imagenet-200/val/val_annotations
     for line in f.readlines():
         split_line = line.split('\t')
         val_dict[split_line[0]] = split_line[1]
+f.close()
         
 paths = glob.glob('D:/Coding/DeepLearning/Datasets/tiny-imagenet-200/val/images/*')
 for path in paths:
@@ -88,3 +92,14 @@ for path in paths:
         # print(image)
         move(image, path)
     rmdir(path + "/images")
+
+
+
+# words.txt maps each class code to its name, such as "n03908204" to "pencil"
+
+code_name_dict = {}
+with open('D:/Coding/DeepLearning/Datasets/tiny-imagenet-200/words.txt', 'r') as f:
+    for line in f.readlines():
+        split_line = line.split('\t')
+        code_name_dict[split_line[0]] = split_line[1]
+f.close()

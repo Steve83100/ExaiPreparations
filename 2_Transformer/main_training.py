@@ -1,17 +1,12 @@
-from __future__ import unicode_literals, print_function, division
-from EngFra import *
-from Transformer import *
+from EngFra import get_dataloaders
+from Transformer import Transformer
 
 import math
 from matplotlib import pyplot as plt
-import numpy as np
-import random
 import time
 import torch
 from torch import optim
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import random_split, DataLoader, RandomSampler
 from torchinfo import summary
 
 
