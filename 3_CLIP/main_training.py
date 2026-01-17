@@ -12,14 +12,15 @@ import clip
 
 # Hyperparameters
 
-ROOT_PATH = "~/syang/ExaiPreparations/" # Path of ExaiPreparations
+# ROOT_PATH = "~/syang/ExaiPreparations/" # Path of ExaiPreparations
+ROOT_PATH = "D:/Coding/DeepLearning/ExaiPreparations/"
 MODEL_PATH = ROOT_PATH + "ModelSaves/"
 OUTPUT_PATH = ROOT_PATH + "Outputs/"
 MODEL_NAME = "CLIP-MIN50"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 12
-EPOCHS = 50
+EPOCHS = 4
 
 
 
@@ -142,9 +143,11 @@ print("=================================================================")
 print("Preparing to fine-tune image encoder's projection head...")
 
 
-# Reload a new model
+# Reload and save a new model
 model, preprocess = clip.load("ViT-B/32", device=DEVICE)
 model.to(DEVICE)
+path = MODEL_PATH + MODEL_NAME + "-ProjHead.pth"
+torch.save(model.state_dict(), path)
 
 
 # Freeze everything except image encoder's projection head
@@ -200,7 +203,7 @@ for epoch in range(1, EPOCHS+1):
     if valid_accu > max_valid_accu:
         max_valid_accu = valid_accu
         print("Model improved. Saving to disk...")
-        path = MODEL_PATH + MODEL_NAME + '-ProjHead.pth'
+        path = MODEL_PATH + MODEL_NAME + "-ProjHead.pth"
         torch.save(model.state_dict(), path)
 
 
@@ -246,9 +249,11 @@ print("=================================================================")
 print(f"Preparing to fine-tune image encoder's last {K} layers...")
 
 
-# Reload a new model
+# Reload and save a new model
 model, preprocess = clip.load("ViT-B/32", device=DEVICE)
 model.to(DEVICE)
+path = MODEL_PATH + MODEL_NAME + f"-Last{K}.pth"
+torch.save(model.state_dict(), path)
 
 
 # Freeze everything except image encoder's last K layers
@@ -269,7 +274,7 @@ for name, param in model.named_parameters():
 optimizer = torch.optim.AdamW(
     filter(lambda p: p.requires_grad, model.parameters()),
     lr=1e-5, # Smaller lr for last-K fine-tuning
-    weight_decay=1e-4
+    weight_decay=1e-5
 )
 
 
