@@ -82,7 +82,7 @@ DATASET_PATH = "D:/Coding/DeepLearning/Datasets/"
 
 # ====================================================================
 
-class TinyImageNet():
+class MicroImageNet():
     """
     TinyImageNet dataset with 50 classes and 25000 images, created from filtering tiny-imagenet-200.
     Dataset is randomly split into training, validating, and testing set, according to given ratio.
@@ -126,9 +126,9 @@ class TinyImageNet():
         # But this is relatively a minor issue with large, balanced datasets like ImageNet.
         print("Split and transform data...")
         train_set, valid_set, test_set = random_split(self.original_dataset, train_valid_test_ratio)
-        self.train_set = TinyImageNet.DatasetCustomTransforms(train_set, train_transform)
-        self.valid_set = TinyImageNet.DatasetCustomTransforms(valid_set, test_transform)
-        self.test_set = TinyImageNet.DatasetCustomTransforms(test_set, test_transform)
+        self.train_set = MicroImageNet.DatasetCustomTransforms(train_set, train_transform)
+        self.valid_set = MicroImageNet.DatasetCustomTransforms(valid_set, test_transform)
+        self.test_set = MicroImageNet.DatasetCustomTransforms(test_set, test_transform)
         print(f"Resulting size: train {len(self.train_set)}, validate {len(self.valid_set)}, test {len(self.test_set)}")
         
         # Map class code to its name, such as "n03908204" to "pencil"
@@ -148,7 +148,7 @@ def get_data(batch_size, additional_preprocess, train_valid_test_ratio):
         :param train_valid_test_ratio: List of int or float such as [0.8, 0.1, 0.1]
     
     """
-    dataset = TinyImageNet(additional_preprocess, train_valid_test_ratio)
+    dataset = MicroImageNet(additional_preprocess, train_valid_test_ratio)
     train_loader = DataLoader(dataset.train_set, shuffle = True, batch_size = batch_size)
     valid_loader = DataLoader(dataset.valid_set, shuffle = False, batch_size = batch_size)
     test_loader = DataLoader(dataset.test_set, shuffle = False, batch_size = batch_size)
